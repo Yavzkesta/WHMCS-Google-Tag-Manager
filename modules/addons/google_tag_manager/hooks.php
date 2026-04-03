@@ -9,11 +9,12 @@
  *
  * @see https://developers.whmcs.com/hooks/
  *
- * @copyright Copyright (c) Websavers Inc 2021
+ * @copyright Copyright (c) Websavers Inc 2021-2026
  * @license LICENSE file included in this package
  */
 
 use WHMCS\Database\Capsule;
+use WHMCS\User\Client;
 
 if (!defined("WHMCS")) die("This file cannot be accessed directly");
 
@@ -53,6 +54,34 @@ function gtm_ga_module_in_use(){
   $ga_is_active = (strpos($active_addons, 'google_analytics') !== false)? true:false;
         
   return ($ga_is_active && !empty($ga_site_tag))? true:false;
+}
+
+// Fonction pour récupérer les informations client
+function gtm_get_client_info($clientId = null) {
+    if (!$clientId && isset($_SESSION['uid'])) {
+        $clientId = $_SESSION['uid'];
+    }
+    
+    if ($clientId) {
+        try {
+            $client = Client::find($clientId);
+            if ($client) {
+                return [
+                    'client_id' => $client->id,
+                    'email' => $client->email,
+                    'first_name' => $client->firstname,
+                    'last_name' => $client->lastname,
+                    'company' => $client->companyname,
+                    'country' => $client->country,
+                    'phone' => $client->phonenumber
+                ];
+            }
+        } catch (Exception $e) {
+            // Gérer silencieusement l'erreur
+        }
+    }
+    
+    return null;
 }
 
 /** The following two hooks output the code required for GTM to function **/
@@ -99,6 +128,20 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
 
   $itemsArray = array();
   $js_events = '';
+  
+  // Récupérer les informations client pour le suivi
+  $clientInfo = gtm_get_client_info();
+  $clientData = [];
+  if ($clientInfo) {
+      $clientData = [
+          'user_id' => $clientInfo['client_id'],
+          'user_properties' => [
+              'email' => $clientInfo['email'],
+              'customer_type' => !empty($clientInfo['company']) ? 'business' : 'individual',
+              'country' => $clientInfo['country']
+          ]
+      ];
+  }
 
   switch($vars['templatefile']){
 
@@ -111,18 +154,44 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
       } else {
         $price = (string)$vars['pricing']['rawpricing'][$selectedCycle];
       }
-  
+      
+      // Amélioré avec plus de détails sur le produit
       $itemsArray[] = array(
         'item_name'       => htmlspecialchars_decode($productAdded['name']),
         'item_id'         => $productAdded['pid'],
-        'price'           => gtm_format_price($price, $currencyCode, $currencyPrefix), //uses rawpricing so prefix technically doesn't matter
+        'price'           => gtm_format_price($price, $currencyCode, $currencyPrefix),
         'item_category'   => $productAdded['group_name'],
+        'item_variant'    => $selectedCycle,
         'quantity'        => 1,
-        'currency'        => $currencyCode
+        'currency'        => $currencyCode,
+        'item_brand'      => 'WHMCS'
       );
       $event = 'view_item';
       $action = 'configureproduct';
 
+      break;
+      
+    case 'products':
+      // Ajout du suivi des vues de catégorie
+      if (isset($vars['products']) && is_array($vars['products']) && !empty($vars['products'])) {
+        $categoryName = isset($vars['groupname']) ? $vars['groupname'] : 'Uncategorized';
+        
+        foreach ($vars['products'] as $product) {
+          $itemsArray[] = array(
+            'item_name'       => htmlspecialchars_decode($product['name']),
+            'item_id'         => $product['pid'],
+            'price'           => isset($product['pricing']) ? gtm_format_price($product['pricing']['minprice']['price'], $currencyCode, $currencyPrefix) : '0',
+            'item_category'   => $categoryName,
+            'quantity'        => 1,
+            'currency'        => $currencyCode,
+            'item_brand'      => 'WHMCS'
+          );
+        }
+        
+        $event = 'view_item_list';
+        $action = 'view_category';
+      }
+      
       break;
 
     case 'configuredomains':
@@ -131,11 +200,14 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
         foreach($vars['domains'] as $domain){
           if (is_array($domain)){
             $itemsArray[] = array(                        
-              'name'      => ucfirst($domain['type']), //Register, Transfer, Renewal
-              'price'     => gtm_format_price($domain['price'], $currencyCode, $currencyPrefix),
-              'category'  => 'Domain',
-              'quantity'  => 1,
-              'currency'  => $currencyCode
+              'item_name'  => $domain['domain'],
+              'item_id'    => 'domain_' . md5($domain['domain']),
+              'price'      => gtm_format_price($domain['price'], $currencyCode, $currencyPrefix),
+              'item_category' => 'Domain',
+              'item_variant'  => ucfirst($domain['type']), //Register, Transfer, Renewal
+              'quantity'   => 1,
+              'currency'   => $currencyCode,
+              'item_brand' => 'WHMCS'
             );
          }
         }
@@ -152,26 +224,47 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
         $price = $productAdded['pricing']['baseprice'];
         if (is_object($price)) $price = $price->toNumeric();
         $itemsArray[] = array(                       
-          'name'      => htmlspecialchars_decode($productAdded['productinfo']['name']),
-          'id'        => $productAdded['productinfo']['pid'],
-          'price'     => $price, //don't need formatter since we received it formatted
-          'category'  => $productAdded['productinfo']['groupname'],
-          'quantity'  => 1,
-          'currency'  => $currencyCode
+          'item_name'    => htmlspecialchars_decode($productAdded['productinfo']['name']),
+          'item_id'      => $productAdded['productinfo']['pid'],
+          'price'        => $price, //don't need formatter since we received it formatted
+          'item_category' => $productAdded['productinfo']['groupname'],
+          'item_variant' => $productAdded['billingcycle'],
+          'quantity'     => 1,
+          'currency'     => $currencyCode,
+          'item_brand'   => 'WHMCS'
         );
-	foreach ($productAdded['addons'] as $productAddon) {
+        foreach ($productAdded['addons'] as $productAddon) {
           $addonPrice = $productAddon['pricingtext'];
           if (is_object($addonPrice)) $addonPrice= $addonPrice->toNumeric();
           $itemsArray[] = array(
-            'name'      => htmlspecialchars_decode($productAddon['name']),
-            'id'        => $productAddon['addonid'],
-            'price'     => $addonPrice, //don't need formatter since we received it formatted
-            'category'  => $productAdded['productinfo']['groupname'],
-            'quantity'  => $productAddon['qty'],
-            'currency'  => $currencyCode
+            'item_name'    => htmlspecialchars_decode($productAddon['name']),
+            'item_id'      => $productAddon['addonid'],
+            'price'        => $addonPrice, //don't need formatter since we received it formatted
+            'item_category' => $productAdded['productinfo']['groupname'],
+            'item_category2' => 'Addon',
+            'quantity'     => $productAddon['qty'],
+            'currency'     => $currencyCode,
+            'item_brand'   => 'WHMCS'
           );
         }
       }
+      
+      // Ajouter les domaines au panier
+      if (isset($vars['domains']) && is_array($vars['domains'])) {
+        foreach($vars['domains'] as $domain) {
+          $itemsArray[] = array(
+            'item_name'    => $domain['domain'],
+            'item_id'      => 'domain_' . md5($domain['domain']),
+            'price'        => $domain['price'],
+            'item_category' => 'Domain',
+            'item_variant' => $domain['regperiod'] . ' ' . ($domain['regperiod'] > 1 ? 'Years' : 'Year'),
+            'quantity'     => 1,
+            'currency'     => $currencyCode,
+            'item_brand'   => 'WHMCS'
+          );
+        }
+      }
+      
       if ($_REQUEST['a'] == 'view'){
         $event = 'add_to_cart';
         $action = 'viewcart';
@@ -179,6 +272,19 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
       else if ($_REQUEST['a'] == 'checkout'){
         $event = 'begin_checkout';
         $action = 'checkout';
+        
+        // Suivi des étapes de paiement
+        $js_events .= '
+        // Track checkout steps
+        dataLayer.push({
+          "event": "checkout_progress",
+          "ecommerce": {
+            "checkout": {
+              "actionField": {"step": 1, "option": "Begin Checkout"},
+              "products": ' . json_encode($itemsArray) . '
+            }
+          }
+        });';
       }
 
       $js_events .= '
@@ -192,19 +298,37 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
             ecommerce: { items: ' . json_encode($itemsArray) . ' }
           });
         };
-      }';
+      }
+      
+      // Track cart abandonment
+      window.addEventListener("beforeunload", function(e) {
+        if (window.location.href.indexOf("checkout") > -1) {
+          dataLayer.push({ ecommerce: null });
+          dataLayer.push({
+            "event": "cart_abandonment",
+            "ecommerce": {
+              "items": ' . json_encode($itemsArray) . '
+            }
+          });
+        }
+      });';
 
       break;
 
   }
 
   if (!empty($itemsArray) && !empty($event)){
-  
+    
+    // Fusionner les données client avec l'événement
     $eventArray = array(
       'event'         => $event,
       'eventAction'   => $action,
       'ecommerce'     => array( 'items' => $itemsArray )
     );
+    
+    if (!empty($clientData)) {
+      $eventArray = array_merge($eventArray, $clientData);
+    }
 
     return "<script id='GTM_DataLayer'>
     dataLayer.push({ ecommerce: null });  // Clear the previous ecommerce object.
@@ -228,6 +352,20 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
   
   $currencyCode = $order['currencysuffix'];
   $currencyPrefix = $order['currencyprefix'];
+  
+  // Récupérer les informations client pour le suivi
+  $clientInfo = gtm_get_client_info($order['userid']);
+  $clientData = [];
+  if ($clientInfo) {
+      $clientData = [
+          'user_id' => $clientInfo['client_id'],
+          'user_properties' => [
+              'email' => $clientInfo['email'],
+              'customer_type' => !empty($clientInfo['company']) ? 'business' : 'individual',
+              'country' => $clientInfo['country']
+          ]
+      ];
+  }
 	
   //if ( $_REQUEST['debug'] ) var_dump($order); ///DEBUG
   
@@ -242,12 +380,22 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
       $category = $p_g_n[0];
       $name = $p_g_n[1];
     }
+    
+    // Déterminer le type de produit
+    $productType = 'product';
+    if (strpos(strtolower($name), 'domain') !== false) {
+      $productType = 'domain';
+    } elseif (strpos(strtolower($category), 'addon') !== false) {
+      $productType = 'addon';
+    }
+    
     $itemsArray[] = array(
       'item_name'      => $name,
       'item_id'        => $product['relid'],
       'price'          => gtm_format_price($product['amount'], $currencyCode, $currencyPrefix),
-      'item_brand'     => '',
+      'item_brand'     => 'WHMCS',
       'item_category'  => $category,
+      'item_category2' => $productType,
       'quantity'       => 1,
       'currency'       => $currencyCode
     );
@@ -255,7 +403,16 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
   
   $res_invoice = localAPI('GetInvoice', array('invoiceid' => $order['invoiceid']));
   $tax = (float)$res_invoice['tax'] + (float)$res_invoice['tax2'];
+  $shipping = 0;
+  $discount = 0;
   
+  // Calculer la remise si un code promo est utilisé
+  if (!empty($order['promocode'])) {
+    // On pourrait calculer la remise exacte ici si nécessaire
+    $discount = isset($res_invoice['discount']) ? (float)$res_invoice['discount'] : 0;
+  }
+  
+  // Fusionner les données client avec l'événement
   $eventArray = array(
     'event' => 'purchase',
     'ecommerce' => array(
@@ -263,16 +420,31 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
       'affiliation'     => 'WHMCS Orderform',
       'value'           => $order['amount'], // Total transaction value (incl. tax and shipping)
       'tax'             => $tax,
-      'shipping'        => '',
+      'shipping'        => $shipping,
       'currency'        => $currencyCode,
       'coupon'          => $order['promocode'],
+      'discount'        => $discount,
+      'payment_type'    => $order['paymentmethod'],
       'items'           => $itemsArray
     )
   );
+  
+  if (!empty($clientData)) {
+    $eventArray = array_merge($eventArray, $clientData);
+  }
 
   return "<script id='GTM_DataLayer'>
     dataLayer.push({ ecommerce: null });  // Clear the previous ecommerce object.
     dataLayer.push(" . json_encode($eventArray) . ");
+    
+    // Conversion tracking
+    dataLayer.push({
+      'event': 'conversion',
+      'send_to': 'AW-XXXXXXXXXX/XXXXXXXXXX', // Remplacer par votre ID Google Ads
+      'value': " . $order['amount'] . ",
+      'currency': '" . $currencyCode . "',
+      'transaction_id': '" . $order['id'] . "'
+    });
   </script>";
   
 });
@@ -347,4 +519,94 @@ add_hook('ClientAreaPageRegister', 1, function($vars) {
 		';
 	});
 
+});
+
+// Ajout du suivi des vues de produits
+add_hook('ClientAreaPageProductDetails', 1, function($vars) {
+    if (gtm_get_module_settings('gtm-enable-datalayer') == 'off') return '';
+    
+    add_hook('ClientAreaFooterOutput', 1, function($vars) {
+        if (!isset($vars['product'])) return '';
+        
+        $product = $vars['product'];
+        $currency = $vars['activeCurrency'];
+        $currencyCode = $currency->code;
+        $currencyPrefix = $currency->prefix;
+        
+        // Récupérer le prix du produit
+        $price = '0';
+        if (isset($product['pricing'])) {
+            if (isset($product['pricing']['minprice'])) {
+                $price = $product['pricing']['minprice']['price'];
+            } elseif (isset($product['pricing']['monthly'])) {
+                $price = $product['pricing']['monthly'];
+            }
+        }
+        
+        $itemData = [
+            'item_name' => $product['name'],
+            'item_id' => $product['pid'],
+            'price' => gtm_format_price($price, $currencyCode, $currencyPrefix),
+            'item_category' => isset($product['groupname']) ? $product['groupname'] : '',
+            'item_brand' => 'WHMCS',
+            'quantity' => 1,
+            'currency' => $currencyCode
+        ];
+        
+        return '<script id="GTM_DataLayer">
+            dataLayer.push({ ecommerce: null });
+            dataLayer.push({
+                "event": "view_item",
+                "ecommerce": {
+                    "items": [' . json_encode($itemData) . ']
+                }
+            });
+        </script>';
+    });
+});
+
+// Suivi des recherches de domaines
+add_hook('ClientAreaPageDomainSearch', 1, function($vars) {
+    if (gtm_get_module_settings('gtm-enable-datalayer') == 'off') return '';
+    
+    add_hook('ClientAreaFooterOutput', 1, function($vars) {
+        return '<script id="GTM_DataLayer">
+            // Track domain search
+            document.addEventListener("DOMContentLoaded", function() {
+                const searchForms = document.querySelectorAll("form[action*=\'domainchecker\']");
+                searchForms.forEach(form => {
+                    form.addEventListener("submit", function(e) {
+                        const searchTerm = form.querySelector("input[name=\'domain\']").value;
+                        if (searchTerm) {
+                            dataLayer.push({
+                                "event": "domain_search",
+                                "search_term": searchTerm
+                            });
+                        }
+                    });
+                });
+            });
+        </script>';
+    });
+});
+
+// Suivi des connexions client
+add_hook('ClientAreaPageLogin', 1, function($vars) {
+    if (gtm_get_module_settings('gtm-enable-datalayer') == 'off') return '';
+    
+    add_hook('ClientAreaFooterOutput', 1, function($vars) {
+        return '<script id="GTM_DataLayer">
+            document.addEventListener("DOMContentLoaded", function() {
+                const loginForm = document.querySelector("form[action*=\'dologin\']");
+                if (loginForm) {
+                    loginForm.addEventListener("submit", function() {
+                        dataLayer.push({
+                            "event": "login",
+                            "method": "WHMCS"
+                        });
+                    });
+                }
+            });
+        </script>';
+    });
 });

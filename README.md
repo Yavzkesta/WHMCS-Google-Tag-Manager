@@ -1,62 +1,75 @@
-# WHMCS Google Tag Manager #
+# Module Google Tag Manager pour WHMCS
 
-## Summary ##
+Ce module permet d'intégrer facilement Google Tag Manager à votre installation WHMCS avec un suivi e-commerce complet.
 
-This WHMCS module automatically inserts GTM embed codes in the Client Area and provides 
-the necessary JavaScript dataLayer eComm variables
+## Fonctionnalités
 
-## Details ##
+- Intégration automatique du code Google Tag Manager
+- Suivi complet des événements e-commerce (GA4 et Universal Analytics)
+- Suivi des vues de produits et catégories
+- Suivi des ajouts au panier
+- Suivi des processus de paiement
+- Suivi des achats et conversions
+- Suivi des abandons de panier
+- Suivi des inscriptions et connexions utilisateurs
+- Compatible avec Google Analytics 4 et Universal Analytics
 
-There is no admin or client area views for this module.
+## Installation
 
-## Installation & Configuration ##
+1. Téléchargez les fichiers du module
+2. Uploadez le dossier `google_tag_manager` dans le répertoire `/modules/addons/` de votre installation WHMCS
+3. Activez le module dans Configuration > Modules Complémentaires
+4. Configurez votre ID de conteneur GTM dans les paramètres du module
 
-- Install module using the standard method: https://docs.whmcs.com/Addon_Modules_Management#Installing_An_Addon
-- At step 4 of the WHMCS installation steps ("Configure"), you'll see the spot
-to enter your Google Tag Manager Container ID. Enter it and save changes. 
-- Connect GTM to Google Analytics as per the Google guide. Be sure you're 
-connecting to a Google Analytics 4 property ID
+## Configuration
 
-## Google Analytics 4 Ecommerce Integration ##
+### Dans WHMCS
 
-Begin by following the Google's Analytics configuration guide for Tag Manager: https://support.google.com/tagmanager/answer/9442095?hl=en
-This will ensure GTM incorporates the Analytics tracking code on your site
+1. Allez dans Configuration > Modules Complémentaires
+2. Trouvez et activez le module "Google Tag Manager"
+3. Entrez votre ID de conteneur GTM (format GTM-XXXXXXX)
+4. Configurez les autres options selon vos besoins
 
-Now we need to create GA4 Triggers (one of each for each of the following events):
-WHMCS View Item list
-Custom Event
-Event name: view_item_list
+### Dans Google Tag Manager
 
-WHMCS View Item
-Events name (regex): `select_item|domain_selection|view_item`
+1. Créez un nouveau conteneur ou utilisez un existant
+2. Configurez des déclencheurs basés sur les événements suivants :
+   - `view_item` - Vue d'un produit
+   - `view_item_list` - Vue d'une liste de produits/catégorie
+   - `add_to_cart` - Ajout au panier
+   - `begin_checkout` - Début du processus de paiement
+   - `purchase` - Achat complété
+   - `sign_up` - Inscription utilisateur
+   - `login` - Connexion utilisateur
+   - `domain_search` - Recherche de domaine
+   - `cart_abandonment` - Abandon de panier
 
-WHMCS Add To Cart
-Event name: add_to_cart
+## Événements disponibles
 
-WHMCS Begin Checkout
-Event name: begin_checkout
+| Événement | Description | Pages |
+|-----------|-------------|-------|
+| view_item | Vue d'un produit | configureproduct, configuredomains |
+| view_item_list | Vue d'une catégorie | products |
+| add_to_cart | Ajout au panier | viewcart |
+| begin_checkout | Début du processus de paiement | viewcart (checkout) |
+| purchase | Achat complété | Après paiement |
+| sign_up | Inscription utilisateur | register |
+| login | Connexion utilisateur | login |
+| domain_search | Recherche de domaine | domainchecker |
+| cart_abandonment | Abandon de panier | checkout |
 
-WHMCS Purchase
-Event name: purchase
+## Structure des données
 
-WHMCS Sign Up
-Event name: sign_up
+Le module utilise le format de données compatible avec Google Analytics 4, qui inclut :
 
-Repeat that for Tags and in each one configure these values:
-- Tag Type: Google Analytics 4 Events
-- More Settings > Ecommerce > Send Ecommerce data (with the Data source set to Data Layer)
+- Informations sur les produits (nom, ID, prix, catégorie, etc.)
+- Informations sur la transaction (ID, montant, taxes, etc.)
+- Informations sur l'utilisateur (ID client, email, etc.)
 
-The "Event Name" values will match with the HTML/JS markup this module generates, and enabling the Ecommerce data via Data Layer will ensure it captures the ecommerce data within that markup. This data will automatically fill out your Analytics report under Monetization > Ecommerce purchases.
+## Support
 
-Google's general guide to GA 4 event tags in tag manager can be found here: https://support.google.com/tagmanager/answer/13034206
+Pour toute question ou assistance, veuillez contacter le support.
 
-## Developer Notes ##
+## Licence
 
-The documentation to follow for all dataLayer events can be found here: 
-https://developers.google.com/tag-manager/ecommerce-ga4
-
-## Minimum Requirements ##
-
-Only tested with WHMCS 8.3 and newer. Tested working up to WHMCS 8.8.0
-
-This is an open source module provided free of charge and without support. Please do not request features be added, however we welcome you to look through the code, add whatever features you want and fix any bugs you see, then create a pull request for it to be included in core.
+Ce module est distribué sous licence incluse dans ce package.
