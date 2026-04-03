@@ -6,26 +6,44 @@
     "category": "addon",
     "description": {
         "name": "Google Tag Manager",
-        "tagline": "Google Tag Manager support for WHMCS",
-        "long": "Automatically includes the GTM embed codes and provides the necessary JavaScript dataLayer for eCommerce variables",
+        "tagline": "Suivi e-commerce complet avec Google Tag Manager pour WHMCS",
+        "long": "Intègre automatiquement Google Tag Manager à votre WHMCS et fournit un suivi e-commerce complet avec tous les événements nécessaires pour analyser précisément le comportement et les achats de vos clients.",
         "features": [
-            "Provides a settings field to enter your GTM ID",
-            "Automatically embeds the correct GTM code in Client Area",
-            "Inserts the necessary JavaScript dataLayer array with eCommerce variables"
+            "Intégration automatique du code Google Tag Manager",
+            "Suivi complet des événements e-commerce (GA4 et Universal Analytics)",
+            "Suivi des vues de produits et catégories",
+            "Suivi des ajouts au panier et abandons",
+            "Suivi détaillé des achats et conversions",
+            "Suivi des inscriptions et connexions utilisateurs",
+            "Compatible avec Google Analytics 4"
         ]
     },
     "logo": {
         "filename": "logo.png"
     },
     "support": {
-        "homepage": "https:\/\/websavers.ca\/", 
+        "homepage": "https://websavers.ca/", 
         "email": "help@websavers.ca", 
-        "support_url": "https:\/\/clients.websavers.ca\/",
+        "support_url": "https://clients.websavers.ca/"
     },
     "authors": [
         {
             "name": "Websavers Inc.",
-            "homepage": "https:\/\/websavers.ca\/"
+            "homepage": "https://websavers.ca/"
         }
-    ]
+    ],
+    "keywords": [
+        "google tag manager",
+        "gtm",
+        "analytics",
+        "ecommerce",
+        "tracking",
+        "ga4",
+        "conversion tracking",
+        "marketing"
+    ],
+    "version": "4.0",
+    "compatibility": {
+        "minimum": "7.0"
+    }
 }

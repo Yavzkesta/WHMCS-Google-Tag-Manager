@@ -526,7 +526,7 @@ add_hook('ClientAreaPageProductDetails', 1, function($vars) {
     if (gtm_get_module_settings('gtm-enable-datalayer') == 'off') return '';
     
     add_hook('ClientAreaFooterOutput', 1, function($vars) {
-        if (!isset($vars['product'])) return '';
+        if (!isset($vars['product']) || !is_array($vars['product'])) return '';
         
         $product = $vars['product'];
         $currency = $vars['activeCurrency'];
