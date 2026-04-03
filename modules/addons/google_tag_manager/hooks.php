@@ -20,25 +20,36 @@ if (!defined("WHMCS")) die("This file cannot be accessed directly");
 
 define("MODULENAME", 'google_tag_manager');
   
-function gtm_get_module_settings($setting){
+// Function to retrieve module settings with caching
+function gtm_get_module_settings($setting) {
+    static $cached_settings = null;
     
-    if ($setting == null || empty($setting)){
-      return Capsule::table('tbladdonmodules')->select('setting', 'value')
+    if ($cached_settings === null) {
+        $cached_settings = [];
+        $results = Capsule::table('tbladdonmodules')
             ->where('module', MODULENAME)
             ->get();
-    }
-    else{
-      return Capsule::table('tbladdonmodules')
-            ->where('module', MODULENAME)
-            ->where('setting', $setting)
-            ->value('value');
+        
+        foreach ($results as $row) {
+            $cached_settings[$row->setting] = $row->value;
+        }
     }
     
+    if (empty($setting)) {
+        return $cached_settings;
+    }
+    
+    return $cached_settings[$setting] ?? null;
 }
 
-//Remove currency prefix and code, like $ and CAD. Swap comma for dot separator.
-function gtm_format_price($price, $currencyCode, $prefix){ 
-  return str_ireplace([$prefix, ',', ' ', $currencyCode],['','.','',''],$price); 
+// Validate and format price safely
+function gtm_format_price($price, $currencyCode, $prefix) {
+    // Clean and validate price
+    $clean_price = preg_replace('/[^0-9.,]/', '', $price);
+    $clean_price = str_replace([',', ' '], '.', $clean_price);
+    $clean_price = str_ireplace([$prefix, $currencyCode], '', $clean_price);
+    
+    return is_numeric($clean_price) ? number_format((float)$clean_price, 2, '.', '') : '0.00';
 }
 
 function gtm_ga_module_in_use(){
@@ -56,28 +67,29 @@ function gtm_ga_module_in_use(){
   return ($ga_is_active && !empty($ga_site_tag))? true:false;
 }
 
-// Fonction pour récupérer les informations client
+// Function to retrieve client information securely
 function gtm_get_client_info($clientId = null) {
     if (!$clientId && isset($_SESSION['uid'])) {
-        $clientId = $_SESSION['uid'];
+        $clientId = filter_var($_SESSION['uid'], FILTER_VALIDATE_INT);
     }
     
-    if ($clientId) {
+    if ($clientId && $clientId > 0) {
         try {
             $client = Client::find($clientId);
             if ($client) {
                 return [
-                    'client_id' => $client->id,
-                    'email' => $client->email,
-                    'first_name' => $client->firstname,
-                    'last_name' => $client->lastname,
-                    'company' => $client->companyname,
-                    'country' => $client->country,
-                    'phone' => $client->phonenumber
+                    'client_id' => (int)$client->id,
+                    'email' => filter_var($client->email, FILTER_SANITIZE_EMAIL),
+                    'first_name' => htmlspecialchars($client->firstname, ENT_QUOTES, 'UTF-8'),
+                    'last_name' => htmlspecialchars($client->lastname, ENT_QUOTES, 'UTF-8'),
+                    'company' => htmlspecialchars($client->companyname, ENT_QUOTES, 'UTF-8'),
+                    'country' => htmlspecialchars($client->country, ENT_QUOTES, 'UTF-8'),
+                    'phone' => htmlspecialchars($client->phonenumber, ENT_QUOTES, 'UTF-8')
                 ];
             }
         } catch (Exception $e) {
-            // Gérer silencieusement l'erreur
+            // Log error for debugging
+            error_log('GTM: Error retrieving client info - ' . $e->getMessage());
         }
     }
     
@@ -87,10 +99,13 @@ function gtm_get_client_info($clientId = null) {
 /** The following two hooks output the code required for GTM to function **/
 
 add_hook('ClientAreaHeadOutput', 1, function($vars) {
-  
-  $container_id = gtm_get_module_settings('gtm-container-id');
+    $container_id = gtm_get_module_settings('gtm-container-id');
+    
+    // Validate GTM container ID format
+    if (!$container_id || !preg_match('/^GTM-[A-Z0-9]{7}$/', $container_id)) {
+        return '';
+    }
 
-  if (!empty($container_id)):
     return "<!-- Google Tag Manager -->
 <script>window.dataLayer = window.dataLayer || [];</script>
 <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
@@ -99,20 +114,20 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
 })(window,document,'script','dataLayer','$container_id');</script>
 <!-- End Google Tag Manager -->";
-  endif;
-
 });
 
 add_hook('ClientAreaHeaderOutput', 1, function($vars) {
-
-  $container_id = gtm_get_module_settings('gtm-container-id');
-  if (!empty($container_id)):
+    $container_id = gtm_get_module_settings('gtm-container-id');
+    
+    // Validate GTM container ID format
+    if (!$container_id || !preg_match('/^GTM-[A-Z0-9]{7}$/', $container_id)) {
+        return '';
+    }
+    
     return "<!-- Google Tag Manager (noscript) -->
 <noscript><iframe src='https://www.googletagmanager.com/ns.html?id=$container_id'
 height='0' width='0' style='display:none;visibility:hidden'></iframe></noscript>
 <!-- End Google Tag Manager (noscript) -->";
-  endif;
-
 });
 
 /** JavaScript dataLayer Variables **/
@@ -155,13 +170,13 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
         $price = (string)$vars['pricing']['rawpricing'][$selectedCycle];
       }
       
-      // Amélioré avec plus de détails sur le produit
+      // Sécurisation des données produit
       $itemsArray[] = array(
-        'item_name'       => htmlspecialchars_decode($productAdded['name']),
-        'item_id'         => $productAdded['pid'],
+        'item_name'       => htmlspecialchars($productAdded['name'], ENT_QUOTES, 'UTF-8'),
+        'item_id'         => (int)$productAdded['pid'],
         'price'           => gtm_format_price($price, $currencyCode, $currencyPrefix),
-        'item_category'   => $productAdded['group_name'],
-        'item_variant'    => $selectedCycle,
+        'item_category'   => htmlspecialchars($productAdded['group_name'], ENT_QUOTES, 'UTF-8'),
+        'item_variant'    => htmlspecialchars($selectedCycle, ENT_QUOTES, 'UTF-8'),
         'quantity'        => 1,
         'currency'        => $currencyCode,
         'item_brand'      => 'WHMCS'
@@ -178,10 +193,10 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
         
         foreach ($vars['products'] as $product) {
           $itemsArray[] = array(
-            'item_name'       => htmlspecialchars_decode($product['name']),
-            'item_id'         => $product['pid'],
+            'item_name'       => htmlspecialchars($product['name'], ENT_QUOTES, 'UTF-8'),
+            'item_id'         => (int)$product['pid'],
             'price'           => isset($product['pricing']) ? gtm_format_price($product['pricing']['minprice']['price'], $currencyCode, $currencyPrefix) : '0',
-            'item_category'   => $categoryName,
+            'item_category'   => htmlspecialchars($categoryName, ENT_QUOTES, 'UTF-8'),
             'quantity'        => 1,
             'currency'        => $currencyCode,
             'item_brand'      => 'WHMCS'
@@ -200,11 +215,11 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
         foreach($vars['domains'] as $domain){
           if (is_array($domain)){
             $itemsArray[] = array(                        
-              'item_name'  => $domain['domain'],
-              'item_id'    => 'domain_' . md5($domain['domain']),
+              'item_name'  => htmlspecialchars($domain['domain'], ENT_QUOTES, 'UTF-8'),
+              'item_id'    => 'domain_' . substr(md5($domain['domain']), 0, 8),
               'price'      => gtm_format_price($domain['price'], $currencyCode, $currencyPrefix),
               'item_category' => 'Domain',
-              'item_variant'  => ucfirst($domain['type']), //Register, Transfer, Renewal
+              'item_variant'  => htmlspecialchars(ucfirst($domain['type']), ENT_QUOTES, 'UTF-8'),
               'quantity'   => 1,
               'currency'   => $currencyCode,
               'item_brand' => 'WHMCS'
@@ -224,11 +239,11 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
         $price = $productAdded['pricing']['baseprice'];
         if (is_object($price)) $price = $price->toNumeric();
         $itemsArray[] = array(                       
-          'item_name'    => htmlspecialchars_decode($productAdded['productinfo']['name']),
-          'item_id'      => $productAdded['productinfo']['pid'],
-          'price'        => $price, //don't need formatter since we received it formatted
-          'item_category' => $productAdded['productinfo']['groupname'],
-          'item_variant' => $productAdded['billingcycle'],
+          'item_name'    => htmlspecialchars($productAdded['productinfo']['name'], ENT_QUOTES, 'UTF-8'),
+          'item_id'      => (int)$productAdded['productinfo']['pid'],
+          'price'        => gtm_format_price($price, $currencyCode, $currencyPrefix),
+          'item_category' => htmlspecialchars($productAdded['productinfo']['groupname'], ENT_QUOTES, 'UTF-8'),
+          'item_variant' => htmlspecialchars($productAdded['billingcycle'], ENT_QUOTES, 'UTF-8'),
           'quantity'     => 1,
           'currency'     => $currencyCode,
           'item_brand'   => 'WHMCS'
@@ -237,12 +252,12 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
           $addonPrice = $productAddon['pricingtext'];
           if (is_object($addonPrice)) $addonPrice= $addonPrice->toNumeric();
           $itemsArray[] = array(
-            'item_name'    => htmlspecialchars_decode($productAddon['name']),
-            'item_id'      => $productAddon['addonid'],
-            'price'        => $addonPrice, //don't need formatter since we received it formatted
-            'item_category' => $productAdded['productinfo']['groupname'],
+            'item_name'    => htmlspecialchars($productAddon['name'], ENT_QUOTES, 'UTF-8'),
+            'item_id'      => (int)$productAddon['addonid'],
+            'price'        => gtm_format_price($addonPrice, $currencyCode, $currencyPrefix),
+            'item_category' => htmlspecialchars($productAdded['productinfo']['groupname'], ENT_QUOTES, 'UTF-8'),
             'item_category2' => 'Addon',
-            'quantity'     => $productAddon['qty'],
+            'quantity'     => (int)$productAddon['qty'],
             'currency'     => $currencyCode,
             'item_brand'   => 'WHMCS'
           );
@@ -253,11 +268,11 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
       if (isset($vars['domains']) && is_array($vars['domains'])) {
         foreach($vars['domains'] as $domain) {
           $itemsArray[] = array(
-            'item_name'    => $domain['domain'],
-            'item_id'      => 'domain_' . md5($domain['domain']),
-            'price'        => $domain['price'],
+            'item_name'    => htmlspecialchars($domain['domain'], ENT_QUOTES, 'UTF-8'),
+            'item_id'      => 'domain_' . substr(md5($domain['domain']), 0, 8),
+            'price'        => gtm_format_price($domain['price'], $currencyCode, $currencyPrefix),
             'item_category' => 'Domain',
-            'item_variant' => $domain['regperiod'] . ' ' . ($domain['regperiod'] > 1 ? 'Years' : 'Year'),
+            'item_variant' => htmlspecialchars($domain['regperiod'] . ' ' . ($domain['regperiod'] > 1 ? 'Years' : 'Year'), ENT_QUOTES, 'UTF-8'),
             'quantity'     => 1,
             'currency'     => $currencyCode,
             'item_brand'   => 'WHMCS'
@@ -265,11 +280,13 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
         }
       }
       
-      if ($_REQUEST['a'] == 'view'){
+      // Validation sécurisée de l'action
+      $action = $_REQUEST['a'] ?? '';
+      if ($action === 'view'){
         $event = 'add_to_cart';
         $action = 'viewcart';
       }
-      else if ($_REQUEST['a'] == 'checkout'){
+      else if ($action === 'checkout'){
         $event = 'begin_checkout';
         $action = 'checkout';
         
@@ -347,14 +364,23 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
 
   if ( gtm_get_module_settings('gtm-enable-datalayer') == 'off' ) return '';
     
-  $res_orders = localAPI('GetOrders', array('id' => $vars['orderid']));
-  $order = $res_orders['orders']['order'][0];
+  // Optimized API call with error handling
+  try {
+    $res_orders = localAPI('GetOrders', ['id' => (int)$vars['orderid'], 'limit' => 1]);
+    if (!$res_orders || !isset($res_orders['orders']['order'][0])) {
+      return '';
+    }
+    $order = $res_orders['orders']['order'][0];
+  } catch (Exception $e) {
+    error_log('GTM: Error retrieving order - ' . $e->getMessage());
+    return '';
+  }
   
-  $currencyCode = $order['currencysuffix'];
-  $currencyPrefix = $order['currencyprefix'];
+  $currencyCode = $order['currencysuffix'] ?? '';
+  $currencyPrefix = $order['currencyprefix'] ?? '';
   
   // Récupérer les informations client pour le suivi
-  $clientInfo = gtm_get_client_info($order['userid']);
+  $clientInfo = gtm_get_client_info((int)($order['userid'] ?? 0));
   $clientData = [];
   if ($clientInfo) {
       $clientData = [
@@ -367,64 +393,75 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
       ];
   }
 	
-  //if ( $_REQUEST['debug'] ) var_dump($order); ///DEBUG
-  
   $itemsArray = array();
-  foreach ($order['lineitems']['lineitem'] as $product){
-    $p_g_n = explode(' - ', $product['product']);
-    if ( count($p_g_n) == 1 ){ 
-      $category = '';
-      $name = $product['product'];
+  if (isset($order['lineitems']['lineitem']) && is_array($order['lineitems']['lineitem'])) {
+    foreach ($order['lineitems']['lineitem'] as $product){
+      $productName = $product['product'] ?? '';
+      $p_g_n = explode(' - ', $productName);
+      if ( count($p_g_n) == 1 ){ 
+        $category = '';
+        $name = $productName;
+      }
+      else if ( count($p_g_n) == 2 ){
+        $category = $p_g_n[0];
+        $name = $p_g_n[1];
+      }
+      
+      // Déterminer le type de produit
+      $productType = 'product';
+      if (strpos(strtolower($name), 'domain') !== false) {
+        $productType = 'domain';
+      } elseif (strpos(strtolower($category), 'addon') !== false) {
+        $productType = 'addon';
+      }
+      
+      $itemsArray[] = array(
+        'item_name'      => htmlspecialchars($name, ENT_QUOTES, 'UTF-8'),
+        'item_id'        => (int)($product['relid'] ?? 0),
+        'price'          => gtm_format_price($product['amount'] ?? '0', $currencyCode, $currencyPrefix),
+        'item_brand'     => 'WHMCS',
+        'item_category'  => htmlspecialchars($category, ENT_QUOTES, 'UTF-8'),
+        'item_category2' => $productType,
+        'quantity'       => 1,
+        'currency'       => $currencyCode
+      );
     }
-    else if ( count($p_g_n) == 2 ){
-      $category = $p_g_n[0];
-      $name = $p_g_n[1];
-    }
-    
-    // Déterminer le type de produit
-    $productType = 'product';
-    if (strpos(strtolower($name), 'domain') !== false) {
-      $productType = 'domain';
-    } elseif (strpos(strtolower($category), 'addon') !== false) {
-      $productType = 'addon';
-    }
-    
-    $itemsArray[] = array(
-      'item_name'      => $name,
-      'item_id'        => $product['relid'],
-      'price'          => gtm_format_price($product['amount'], $currencyCode, $currencyPrefix),
-      'item_brand'     => 'WHMCS',
-      'item_category'  => $category,
-      'item_category2' => $productType,
-      'quantity'       => 1,
-      'currency'       => $currencyCode
-    );
   }
   
-  $res_invoice = localAPI('GetInvoice', array('invoiceid' => $order['invoiceid']));
-  $tax = (float)$res_invoice['tax'] + (float)$res_invoice['tax2'];
+  // Optimized invoice API call
+  try {
+    $res_invoice = localAPI('GetInvoice', ['invoiceid' => (int)($order['invoiceid'] ?? 0)]);
+    $tax = (float)($res_invoice['tax'] ?? 0) + (float)($res_invoice['tax2'] ?? 0);
+    $discount = (float)($res_invoice['discount'] ?? 0);
+  } catch (Exception $e) {
+    $tax = 0;
+    $discount = 0;
+  }
+  
   $shipping = 0;
-  $discount = 0;
   
   // Calculer la remise si un code promo est utilisé
   if (!empty($order['promocode'])) {
-    // On pourrait calculer la remise exacte ici si nécessaire
-    $discount = isset($res_invoice['discount']) ? (float)$res_invoice['discount'] : 0;
+    $discount = max($discount, 0);
   }
+  
+  // Get Google Ads settings
+  $googleAdsId = gtm_get_module_settings('gtm-google-ads-id');
+  $conversionLabel = gtm_get_module_settings('gtm-conversion-label');
   
   // Fusionner les données client avec l'événement
   $eventArray = array(
     'event' => 'purchase',
     'ecommerce' => array(
-      'transaction_id'  => $order['id'],
+      'transaction_id'  => (int)($order['id'] ?? 0),
       'affiliation'     => 'WHMCS Orderform',
-      'value'           => $order['amount'], // Total transaction value (incl. tax and shipping)
-      'tax'             => $tax,
+      'value'           => gtm_format_price($order['amount'] ?? '0', $currencyCode, $currencyPrefix),
+      'tax'             => gtm_format_price($tax, $currencyCode, $currencyPrefix),
       'shipping'        => $shipping,
       'currency'        => $currencyCode,
-      'coupon'          => $order['promocode'],
-      'discount'        => $discount,
-      'payment_type'    => $order['paymentmethod'],
+      'coupon'          => htmlspecialchars($order['promocode'] ?? '', ENT_QUOTES, 'UTF-8'),
+      'discount'        => gtm_format_price($discount, $currencyCode, $currencyPrefix),
+      'payment_type'    => htmlspecialchars($order['paymentmethod'] ?? '', ENT_QUOTES, 'UTF-8'),
       'items'           => $itemsArray
     )
   );
@@ -433,22 +470,26 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
     $eventArray = array_merge($eventArray, $clientData);
   }
 
+  $conversionScript = '';
+  if ($googleAdsId && $conversionLabel) {
+    $conversionScript = '
+    // Conversion tracking
+    dataLayer.push({
+      "event": "conversion",
+      "send_to": "' . htmlspecialchars($googleAdsId, ENT_QUOTES, 'UTF-8') . '/' . htmlspecialchars($conversionLabel, ENT_QUOTES, 'UTF-8') . '",
+      "value": ' . gtm_format_price($order['amount'] ?? '0', $currencyCode, $currencyPrefix) . ',
+      "currency": "' . htmlspecialchars($currencyCode, ENT_QUOTES, 'UTF-8') . '",
+      "transaction_id": "' . (int)($order['id'] ?? 0) . '"
+    });';
+  }
+
   return "<script id='GTM_DataLayer'>
     dataLayer.push({ ecommerce: null });  // Clear the previous ecommerce object.
     dataLayer.push(" . json_encode($eventArray) . ");
-    
-    // Conversion tracking
-    dataLayer.push({
-      'event': 'conversion',
-      'send_to': 'AW-XXXXXXXXXX/XXXXXXXXXX', // Remplacer par votre ID Google Ads
-      'value': " . $order['amount'] . ",
-      'currency': '" . $currencyCode . "',
-      'transaction_id': '" . $order['id'] . "'
-    });
+    " . $conversionScript . "
   </script>";
   
 });
-
 
 add_hook('ClientAreaPageRegister', 1, function($vars) {
     
@@ -529,14 +570,16 @@ add_hook('ClientAreaPageProductDetails', 1, function($vars) {
         if (!isset($vars['product']) || !is_array($vars['product'])) return '';
         
         $product = $vars['product'];
-        $currency = $vars['activeCurrency'];
-        $currencyCode = $currency->code;
-        $currencyPrefix = $currency->prefix;
+        $currency = $vars['activeCurrency'] ?? null;
+        if (!$currency || !is_object($currency)) return '';
+        
+        $currencyCode = $currency->code ?? '';
+        $currencyPrefix = $currency->prefix ?? '';
         
         // Récupérer le prix du produit
         $price = '0';
         if (isset($product['pricing'])) {
-            if (isset($product['pricing']['minprice'])) {
+            if (isset($product['pricing']['minprice']['price'])) {
                 $price = $product['pricing']['minprice']['price'];
             } elseif (isset($product['pricing']['monthly'])) {
                 $price = $product['pricing']['monthly'];
@@ -544,10 +587,10 @@ add_hook('ClientAreaPageProductDetails', 1, function($vars) {
         }
         
         $itemData = [
-            'item_name' => $product['name'],
-            'item_id' => $product['pid'],
+            'item_name' => htmlspecialchars($product['name'] ?? '', ENT_QUOTES, 'UTF-8'),
+            'item_id' => (int)($product['pid'] ?? 0),
             'price' => gtm_format_price($price, $currencyCode, $currencyPrefix),
-            'item_category' => isset($product['groupname']) ? $product['groupname'] : '',
+            'item_category' => htmlspecialchars($product['groupname'] ?? '', ENT_QUOTES, 'UTF-8'),
             'item_brand' => 'WHMCS',
             'quantity' => 1,
             'currency' => $currencyCode
