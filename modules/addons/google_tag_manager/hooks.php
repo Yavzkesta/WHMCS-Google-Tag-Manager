@@ -349,6 +349,7 @@ add_hook('ClientAreaFooterOutput', 1, function($vars) {
 
     return "<script id='GTM_DataLayer'>
     dataLayer.push({ ecommerce: null });  // Clear the previous ecommerce object.
+    " . (gtm_get_module_settings('gtm-debug-mode') == 'on' ? 'console.log("GTM Debug Event:", ' . json_encode($eventArray) . ');' : '') . "
     dataLayer.push(" . json_encode($eventArray) . ");
     " . $js_events . "
 </script>";

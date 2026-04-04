@@ -73,6 +73,12 @@ function google_tag_manager_config(){
                 'Default' => 'yes',
                 'Description' => 'Envoie un événement lorsqu\'un utilisateur quitte la page de paiement sans finaliser',
             ],
+            'gtm-debug-mode' => [
+                'FriendlyName' => 'Mode Debug',
+                'Type' => 'yesno',
+                'Default' => 'no',
+                'Description' => 'Affiche les événements GTM dans la console du navigateur pour le debugging',
+            ],
         ]
     ];
 }
